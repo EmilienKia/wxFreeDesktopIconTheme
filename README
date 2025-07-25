@@ -1,0 +1,5 @@
+# wxFreeDesktopIconTheme
+
+A C++ library that provides a minimal support of FreeDesktop's Icon Theme Specification for wxWidgets,
+enabling applications to load and display icons from the system's icon theme.
+
