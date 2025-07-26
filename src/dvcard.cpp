@@ -29,6 +29,8 @@ IMPLEMENT_DYNAMIC_CLASS(wxDataViewCardCtrl, wxDataViewCtrl)
 
 BEGIN_EVENT_TABLE(wxDataViewCardCtrl, wxDataViewCtrl)
     EVT_PAINT(wxDataViewCardCtrl::OnPaint)
+    EVT_SIZE(wxDataViewCardCtrl::OnSize)
+    EVT_SCROLLWIN(wxDataViewCardCtrl::OnScroll)
 END_EVENT_TABLE()
 
 wxDataViewCardCtrl::wxDataViewCardCtrl() :
@@ -37,7 +39,7 @@ wxControl()
 }
 
 wxDataViewCardCtrl::wxDataViewCardCtrl(wxWindow* parent, wxWindowID id, const wxPoint& pos, const wxSize& size, long style, const wxString& name):
-wxControl(parent, id, pos, size, style, wxDefaultValidator, name)
+wxControl(parent, id, pos, size, style|wxVSCROLL, wxDefaultValidator, name)
 {
     CommonInit();
 }
@@ -56,7 +58,7 @@ wxDataViewCardCtrl::~wxDataViewCardCtrl()
 
 bool wxDataViewCardCtrl::Create(wxWindow* parent, wxWindowID id, const wxPoint& pos, const wxSize& size, long style, const wxString& name)
 {
-    if(!wxControl::Create(parent, id, pos, size, style, wxDefaultValidator, name)) {
+    if(!wxControl::Create(parent, id, pos, size, style|wxVSCROLL, wxDefaultValidator, name)) {
         return false;
     }
     CommonInit();
@@ -86,11 +88,13 @@ void wxDataViewCardCtrl::AssociateModel(wxDataViewListModel* model)
 {
     if(_model != model) {
         if(_model != nullptr) {
+            _model->RemoveNotifier(this);
             _model->DecRef();
         }
         _model = model;
         if(_model) {
             _model->IncRef();
+            _model->AddNotifier(this);
         }
     }
 }
@@ -111,35 +115,26 @@ void wxDataViewCardCtrl::OnPaint(wxPaintEvent& event)
         wxDataViewItem root;
         unsigned int count = model->GetChildren(root, children);
 
-        // Compute max size
-        wxSize maxSize{0,0};
-        for(unsigned int i = 0; i < count; ++i)
-        {
-            wxDataViewItem item = children[i];
-            wxSize cardSize = _renderer->GetCardSize(*model, item);
-            if(cardSize.GetWidth() > maxSize.GetWidth()) {
-                maxSize.SetWidth(cardSize.GetWidth());
-            }
-            if(cardSize.GetHeight() > maxSize.GetHeight()) {
-                maxSize.SetHeight(cardSize.GetHeight());
-            }
+        wxPoint pos{_marginSize.GetWidth(), _marginSize.GetHeight()};;
+
+        int cardPerRow = (clientSize.GetWidth()-_marginSize.GetWidth()) / (_maxSize.GetWidth()+_marginSize.GetWidth());
+        if(cardPerRow <= 0) {
+            cardPerRow = 1; // At least one card per row
         }
+        int firstCard = GetScrollPos(wxVERTICAL) * cardPerRow;
 
-        wxSize margins{8, 8};
-        wxPoint pos{margins.GetWidth(), margins.GetHeight()};;
-
-        for(unsigned int i = 0; i < count; ++i)
+        for(unsigned int i = firstCard; i < count; ++i)
         {
             wxDataViewItem item = children[i];
-            dc.SetClippingRegion(pos, maxSize);
-            _renderer->DrawCard(*model, item, dc, pos, maxSize);
+            dc.SetClippingRegion(pos, _maxSize);
+            _renderer->DrawCard(*model, item, dc, pos, _maxSize);
             dc.DestroyClippingRegion();
-            pos.x += maxSize.GetWidth() + margins.GetWidth();
+            pos.x += _maxSize.GetWidth() + _marginSize.GetWidth();
 
-            if(pos.x + maxSize.GetWidth() + margins.GetWidth() > clientSize.GetWidth()) {
+            if(pos.x + _maxSize.GetWidth() + _marginSize.GetWidth() > clientSize.GetWidth()) {
                 // If next card would overflow, move to next row
-                pos.x = margins.GetWidth();
-                pos.y += maxSize.GetHeight() + margins.GetHeight();
+                pos.x = _marginSize.GetWidth();
+                pos.y += _maxSize.GetHeight() + _marginSize.GetHeight();
             }
 
             if(pos.y >= clientSize.GetHeight()) {
@@ -149,3 +144,153 @@ void wxDataViewCardCtrl::OnPaint(wxPaintEvent& event)
         }
     }
 }
+
+void wxDataViewCardCtrl::OnSize(wxSizeEvent& event)
+{
+    UpdateScrollbars();
+    Refresh();
+}
+
+void wxDataViewCardCtrl::OnScroll(wxScrollWinEvent& event)
+{
+    UpdateScrollbars();
+    Refresh();
+}
+
+bool wxDataViewCardCtrl::ItemAdded( const wxDataViewItem &parent, const wxDataViewItem &item )
+{
+    ComputeCardSize(item);
+    UpdateScrollbars();
+    return true;
+}
+
+bool wxDataViewCardCtrl::ItemDeleted( const wxDataViewItem &parent, const wxDataViewItem &item )
+{
+    _cardSizes.erase(item.GetID());
+    RecalculateMaxSize();
+    UpdateScrollbars();
+    return true;
+}
+
+bool wxDataViewCardCtrl::ItemChanged( const wxDataViewItem &item )
+{
+    ComputeCardSize(item);
+    UpdateScrollbars();
+    return true;
+}
+
+bool wxDataViewCardCtrl::ItemsAdded( const wxDataViewItem &parent, const wxDataViewItemArray &items )
+{
+    ComputeCardSizes(items);
+    UpdateScrollbars();
+    return true;
+}
+
+bool wxDataViewCardCtrl::ItemsDeleted( const wxDataViewItem &parent, const wxDataViewItemArray &items )
+{
+    for(const auto& item : items) {
+        _cardSizes.erase(item.GetID());
+    }
+    RecalculateMaxSize();
+    UpdateScrollbars();
+    return true;
+}
+
+bool wxDataViewCardCtrl::ItemsChanged( const wxDataViewItemArray &items )
+{
+    ComputeCardSizes(items);
+    UpdateScrollbars();
+    return true;
+}
+
+bool wxDataViewCardCtrl::ValueChanged( const wxDataViewItem &item, unsigned int col )
+{
+    ComputeCardSize(item);
+    UpdateScrollbars();
+    return true;
+}
+
+bool wxDataViewCardCtrl::Cleared()
+{
+    _cardSizes.clear();
+    RecalculateMaxSize();
+    UpdateScrollbars();
+    return true;
+}
+
+void wxDataViewCardCtrl::Resort()
+{
+    // Do nothing
+}
+
+void wxDataViewCardCtrl::ComputeCardSize(const wxDataViewItem &item)
+{
+    wxClientDC dc(this);
+    if(_model && _renderer) {
+        wxSize size = _renderer->GetCardSize(*_model, item, dc);
+        _cardSizes[item.GetID()] = size;
+        if(size.GetWidth() > _maxSize.GetWidth()) {
+            _maxSize.SetWidth(size.GetWidth());
+        }
+        if(size.GetHeight() > _maxSize.GetHeight()) {
+            _maxSize.SetHeight(size.GetHeight());
+        }
+    }
+}
+
+void wxDataViewCardCtrl::ComputeCardSizes(const wxDataViewItemArray &items)
+{
+    wxClientDC dc(this);
+    if(_model && _renderer) {
+        for(const auto& item : items) {
+            wxSize size = _renderer->GetCardSize(*_model, item, dc);
+            _cardSizes[item.GetID()] = size;
+            if(size.GetWidth() > _maxSize.GetWidth()) {
+                _maxSize.SetWidth(size.GetWidth());
+            }
+            if(size.GetHeight() > _maxSize.GetHeight()) {
+                _maxSize.SetHeight(size.GetHeight());
+            }
+        }
+    }
+}
+
+void wxDataViewCardCtrl::RecalculateMaxSize()
+{
+    _maxSize = {0, 0};
+    if(_model) {
+        wxDataViewItemArray items;
+        _model->GetChildren(wxDataViewItem(), items);
+        ComputeCardSizes(items);
+    }
+}
+
+void wxDataViewCardCtrl::UpdateScrollbars()
+{
+    int oldPos = GetScrollPos(wxVERTICAL);
+    wxSize clientSize = GetClientSize();
+
+    if(_cardSizes.empty() || clientSize.x <= 0 || clientSize.y <= 0) {
+        SetScrollbar(wxVERTICAL, 0, 1, 1);
+        return;
+    }
+
+    clientSize -= _marginSize;
+    int cardPerRow = clientSize.x / (_maxSize.GetWidth() + _marginSize.GetWidth());
+    if(cardPerRow <= 0) {
+        cardPerRow = 1; // At least one card per row
+    }
+    int lineCount = _cardSizes.size() / cardPerRow;
+    if(_cardSizes.size() % cardPerRow != 0) {
+        lineCount++; // Add one more line if there are remaining cards
+    }
+
+    int cardPerColumn = clientSize.y / (_maxSize.GetHeight() + _marginSize.GetHeight());
+
+    if(oldPos > lineCount) {
+        oldPos = lineCount; // Clamp old position to max lines
+    }
+
+    SetScrollbar(wxVERTICAL, oldPos, cardPerColumn, lineCount);
+}
+

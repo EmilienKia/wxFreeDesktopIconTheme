@@ -28,6 +28,7 @@
 
 #include <wx/dataview.h>
 #include <wx/control.h>
+#include <map>
 
 class wxDataViewCardRenderer : public wxRefCounter
 {
@@ -35,14 +36,14 @@ public:
     wxDataViewCardRenderer() = default;
     virtual ~wxDataViewCardRenderer() = default;
 
-    virtual wxSize GetCardSize(const wxDataViewListModel& model, const wxDataViewItem& item) const =0;
+    virtual wxSize GetCardSize(const wxDataViewListModel& model, const wxDataViewItem& item, const wxDC& dc) const =0;
     virtual void DrawCard(const wxDataViewListModel& model, const wxDataViewItem& item, wxDC& dc, const wxPoint& pos, const wxSize& size) const =0;
 
     virtual size_t GetFieldCount() const =0;
 };
 
 
-class wxDataViewCardCtrl : public /*wxDataViewCtrl*/wxControl {
+class wxDataViewCardCtrl : public /*wxDataViewCtrl*/wxControl, protected wxDataViewModelNotifier {
     wxDECLARE_DYNAMIC_CLASS(wxDataViewCardCtrl);
     wxDECLARE_EVENT_TABLE();
 public:
@@ -68,10 +69,30 @@ protected:
     wxDataViewListModel* _model = nullptr;
     wxDataViewCardRenderer* _renderer = nullptr;
 
+    std::map<void*, wxSize> _cardSizes;
+    wxSize _maxSize;
+    wxSize _marginSize {8, 8};
+
+    void ComputeCardSize(const wxDataViewItem &item);
+    void ComputeCardSizes(const wxDataViewItemArray &items);
+    void RecalculateMaxSize();
+    void UpdateScrollbars();
+
     void CommonInit();
 
     void OnPaint(wxPaintEvent& event);
+    void OnSize(wxSizeEvent& event);
+    void OnScroll(wxScrollWinEvent& event);
 
+    bool ItemAdded( const wxDataViewItem &parent, const wxDataViewItem &item ) override;
+    bool ItemDeleted( const wxDataViewItem &parent, const wxDataViewItem &item ) override;
+    bool ItemChanged( const wxDataViewItem &item ) override;
+    bool ItemsAdded( const wxDataViewItem &parent, const wxDataViewItemArray &items ) override;
+    bool ItemsDeleted( const wxDataViewItem &parent, const wxDataViewItemArray &items ) override;
+    bool ItemsChanged( const wxDataViewItemArray &items ) override;
+    bool ValueChanged( const wxDataViewItem &item, unsigned int col ) override;
+    bool Cleared() override;
+    void Resort() override;
 };
 
 

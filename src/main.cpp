@@ -40,8 +40,35 @@ class IconCardRenderer : public wxDataViewCardRenderer {
 public:
     IconCardRenderer() = default;
 
-    wxSize GetCardSize(const wxDataViewListModel& model, const wxDataViewItem& item) const override {
-        return wxSize(150, 150); // Taille fixe pour les cartes
+    wxSize GetCardSize(const wxDataViewListModel& model, const wxDataViewItem& item, const wxDC& dc) const override {
+        wxVariant iconNameVar;
+        wxVariant bitmapVar;
+        model.GetValue(iconNameVar, item, 0);
+        model.GetValue(bitmapVar, item, 1);
+
+        wxString name = iconNameVar.GetString();
+        if (name.Length() > 48) {
+            name = name.substr(0, 45) + "...";
+        }
+        wxBitmap bitmap;
+        if( bitmapVar.IsType("wxBitmap")) {
+            bitmap << bitmapVar;
+        }
+
+        wxSize res;
+
+        if (bitmap.IsOk()) {
+            res = bitmap.GetSize();
+            res.y += 8; // Space for text
+        }
+
+        if (name.Length() > 0) {
+            wxSize textSz = dc.GetTextExtent(name);
+            res.x = std::max(res.x, textSz.x);
+            res.y += textSz.y;
+        }
+
+        return res;
     }
 
     void DrawCard(const wxDataViewListModel& model, const wxDataViewItem& item, wxDC& dc, const wxPoint& pos, const wxSize& size) const override {
@@ -52,11 +79,17 @@ public:
 
         wxString name = iconNameVar.GetString();
         wxBitmap bitmap;
-        bitmap << bitmapVar;
+        if( bitmapVar.IsType("wxBitmap")) {
+            bitmap << bitmapVar;
+        }
 
         dc.SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT));
         dc.SetBrush(wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_ACTIVECAPTION), wxBRUSHSTYLE_CROSSDIAG_HATCH));
         dc.SetPen(*wxTRANSPARENT_PEN);
+
+        if(name.Length() > 48) {
+            name = name.substr(0, 45) + "...";
+        }
 
         wxSize textSz = dc.GetTextExtent(name);
         dc.DrawText(name, pos.x + (size.x - textSz.x) / 2, pos.y + size.y - textSz.y);;
@@ -84,7 +117,11 @@ public:
             if(col == 0) {
                 value = iconData.name;
             } else if(col == 1) {
-                value << iconData.bitmap;
+                if(iconData.bitmap.IsOk()) {
+                    value = wxVariant(iconData.bitmap);
+                } else {
+                    value = wxVariant();
+                }
             }
         } else {
             value = wxVariant();
