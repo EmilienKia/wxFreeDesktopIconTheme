@@ -38,7 +38,7 @@
 
 IconTheme::IconTheme(const wxString& themePath) : path(themePath) {}
 
-bool IconTheme::Load() {
+bool IconTheme::Preload() {
     wxFileName indexFile(path, "index.theme");
     if (!indexFile.FileExists()) return false;
 
@@ -76,28 +76,31 @@ bool IconTheme::Load() {
         config.SetPath("/");
     }
 
-    BuildCache();
     return true;
 }
 
-void IconTheme::BuildCache() {
-    for (const auto& dir : directories) {
-        wxDir directory(dir.path);
-        if (!directory.IsOpened()) continue;
+void IconTheme::BuildCache(bool force) const {
+    if(iconCache.size()==0 || force) {
+        iconCache.clear();
+        for (const auto& dir : directories) {
+            wxDir directory(dir.path);
+            if (!directory.IsOpened()) continue;
 
-        wxString file;
-        bool cont = directory.GetFirst(&file, "*.png", wxDIR_FILES);
-        while (cont) {
-            wxFileName full(dir.path, file);
-            wxString iconName = full.GetName();  // sans extension
-            iconCache[iconName][dir.size] = full;
+            wxString file;
+            bool cont = directory.GetFirst(&file, "*.png", wxDIR_FILES);
+            while (cont) {
+                wxFileName full(dir.path, file);
+                wxString iconName = full.GetName();  // sans extension
+                iconCache[iconName][dir.size] = full;
 
-            cont = directory.GetNext(&file);
+                cont = directory.GetNext(&file);
+            }
         }
     }
 }
 
 std::optional<wxFileName> IconTheme::FindIcon(const wxString& iconName, int size) {
+    BuildCache();
     if (iconCache.count(iconName)) {
         const auto& sizeMap = iconCache[iconName];
         if (sizeMap.count(size)) return sizeMap.at(size);
@@ -113,6 +116,7 @@ std::optional<wxFileName> IconTheme::FindIcon(const wxString& iconName, int size
 }
 
 std::map<int, wxFileName> IconTheme::FindAllIcons(const wxString& iconName) const {
+    BuildCache();
     std::map<int, wxFileName> results;
     auto it = iconCache.find(iconName);
     if (it != iconCache.end()) {
@@ -124,6 +128,7 @@ std::map<int, wxFileName> IconTheme::FindAllIcons(const wxString& iconName) cons
 }
 
 std::set<wxString> IconTheme::GetIconNames() const {
+    BuildCache();
     std::set<wxString> names;
     for (const auto& [name, _] : iconCache) {
         names.insert(name);
@@ -146,29 +151,83 @@ const wxVector<wxString>& ThemeDirectoryManager::GetPaths() const {
 }
 
 //
-// IconLocator
+// FreeDesktopIconProvider
 //
 
-IconLocator::IconLocator(ThemeDirectoryManager& dirManager) : dirs(dirManager) {
+FreeDesktopIconProvider::FreeDesktopIconProvider()
+{
 }
 
-void IconLocator::LoadThemes() {
-    for (const auto& base : dirs.GetPaths()) {
-        wxDir dir(base);
-        wxString sub;
-        bool cont = dir.GetFirst(&sub, wxEmptyString, wxDIR_DIRS);
-        while (cont) {
-            wxFileName themePath(base, sub);
-            IconTheme theme(themePath.GetFullPath());
-            if (theme.Load()) {
-                themes.insert({theme.GetName(), std::move(theme)});
-            }
-            cont = dir.GetNext(&sub);
-        }
+FreeDesktopIconProvider::FreeDesktopIconProvider(const wxVector<wxString>& paths)
+{
+    for(const auto& path : paths) {
+        AppendPath(path);
     }
 }
 
-wxVector<wxString> IconLocator::GetThemeNames() const {
+void FreeDesktopIconProvider::Clear()
+{
+    directories.clear();
+    themes.clear();
+}
+
+void FreeDesktopIconProvider::AppendPath(const wxString& path)
+{
+    // TODO Ensure the path iis not already in the list
+    wxFileName dirPath(path);
+    if (wxDirExists(dirPath.GetFullPath())) {
+        directories.push_back(std::move(LoadThemesFromDirectory(dirPath)));
+    }/* else {
+        wxLogWarning("Directory does not exist: %s", dirPath.GetFullPath());
+    }*/
+}
+
+void FreeDesktopIconProvider::PrependPath(const wxString& path)
+{
+    // TODO Ensure the path iis not already in the list
+    wxFileName dirPath(path);
+    if (wxDirExists(dirPath.GetFullPath())) {
+        directories.insert(directories.begin(), std::move(LoadThemesFromDirectory(dirPath)));
+    }/* else {
+        wxLogWarning("Directory does not exist: %s", dirPath.GetFullPath());
+    }*/
+}
+
+void FreeDesktopIconProvider::RemovePath(const wxString& path)
+{
+    wxString fullPath = wxFileName(path).GetFullPath();
+    auto it = std::find_if(directories.begin(), directories.end(), [&](const ThemeDirectory& dir)-> bool { return dir.path == fullPath; });
+    if(it!= directories.end()) {
+        for(const auto& theme : it->themes) {
+            themes.erase(theme.second); // Remove theme from the main map
+        }
+        directories.erase(it);
+    }/* else {
+        wxLogWarning("Directory not found: %s", fullPath);
+    }*/
+}
+
+ThemeDirectory FreeDesktopIconProvider::LoadThemesFromDirectory(const wxFileName& dirPath)
+{
+    ThemeDirectory themeDir;
+    themeDir.path = dirPath.GetFullPath();
+
+    wxDir dir(themeDir.path);
+    wxString sub;
+    bool cont = dir.GetFirst(&sub, wxEmptyString, wxDIR_DIRS);
+    while (cont) {
+        wxFileName themePath(themeDir.path, sub);
+        IconTheme theme(themePath.GetFullPath());
+        if (theme.Preload()) {
+            themeDir.themes.insert({themePath.GetFullPath(), theme.GetName()});
+            themes.insert({theme.GetName(), std::move(theme)});
+        }
+        cont = dir.GetNext(&sub);
+    }
+    return std::move(themeDir);
+}
+
+wxVector<wxString> FreeDesktopIconProvider::GetThemeNames() const {
     wxVector<wxString> names;
     for (const auto& [name, _] : themes) {
         names.push_back(name);
@@ -176,7 +235,7 @@ wxVector<wxString> IconLocator::GetThemeNames() const {
     return names;
 }
 
-std::set<wxString> IconLocator::GetIconNames(const wxString& themeName) const
+std::set<wxString> FreeDesktopIconProvider::GetIconNames(const wxString& themeName) const
 {
     std::set<wxString> res;
     auto it = themes.find(themeName);
@@ -192,18 +251,18 @@ std::set<wxString> IconLocator::GetIconNames(const wxString& themeName) const
     return res;
 }
 
-std::set<wxString> IconLocator::GetIconNames() const
+std::set<wxString> FreeDesktopIconProvider::GetIconNames() const
 {
     return GetIconNames(currentTheme);
 }
 
 
 
-std::optional<wxFileName> IconLocator::FindIcon(const wxString& iconName, int size) {
+std::optional<wxFileName> FreeDesktopIconProvider::FindIcon(const wxString& iconName, int size) {
     return FindIcon(currentTheme, iconName, size);
 }
 
-std::optional<wxFileName> IconLocator::FindIcon(const wxString& theme, const wxString& iconName, int size) {
+std::optional<wxFileName> FreeDesktopIconProvider::FindIcon(const wxString& theme, const wxString& iconName, int size) {
     auto it = themes.find(theme);
     if (it == themes.end()) return std::nullopt;
 
@@ -218,7 +277,7 @@ std::optional<wxFileName> IconLocator::FindIcon(const wxString& theme, const wxS
     return std::nullopt;
 }
 
-std::optional<wxBitmapBundle> IconLocator::LoadIconBundle(const wxString& iconName) {
+std::optional<wxBitmapBundle> FreeDesktopIconProvider::LoadIconBundle(const wxString& iconName) {
     std::map<int, wxFileName> foundIcons;
 
     std::set<wxString> visited;
@@ -247,7 +306,7 @@ std::optional<wxBitmapBundle> IconLocator::LoadIconBundle(const wxString& iconNa
 
     wxVector<wxBitmap> bitmaps;
     for (const auto& [size, file] : foundIcons) {
-        // TODO Load through wxImage to handle SVGs and PNGs
+        // TODO Preload through wxImage to handle SVGs and PNGs
         wxBitmap bmp(file.GetFullPath(), wxBITMAP_TYPE_ANY);
         if (bmp.IsOk())
             bitmaps.push_back(bmp);

@@ -160,13 +160,10 @@ public:
     IconThemeViewer() : wxFrame(nullptr, wxID_ANY, "Visualiseur de thèmes d'icônes",
                                 wxDefaultPosition, wxSize(1000, 700)) {
 
-        dirManager.AddPath("/usr/share/pixmaps/");
-        dirManager.AddPath("/usr/share/icons/");
-        dirManager.AddPath("~/.local/share/icons/");
-        dirManager.AddPath("~/.icons/");
-
-        iconLocator = new IconLocator(dirManager);
-
+        iconProvider.AppendPath("~/.icons/");
+        iconProvider.AppendPath("~/.local/share/icons/");
+        iconProvider.AppendPath("/usr/share/icons/");
+        iconProvider.AppendPath("/usr/share/pixmaps/");
 
         CreateControls();
         SetupLayout();
@@ -194,7 +191,7 @@ private:
 
     // Données
     ThemeDirectoryManager dirManager;
-    IconLocator* iconLocator;
+    FreeDesktopIconProvider iconProvider;
 
     IconStore*  store;
     wxDataViewCardRenderer* cardRenderer;
@@ -311,10 +308,10 @@ private:
     void RefreshThemes() {
         wxString theme = themeChoice->GetStringSelection();
 
-        iconLocator->LoadThemes();
+//        iconProvider.LoadThemes();
 
         themeChoice->Clear();
-        auto themes = iconLocator->GetThemeNames();
+        auto themes = iconProvider.GetThemeNames();
         for (const auto& theme : themes) {
             themeChoice->Append(theme);
         }
@@ -352,7 +349,7 @@ private:
 
         for (const auto& iconName : iconNames) {
 
-            auto iconFile = iconLocator->FindIcon(themeName, iconName, iconSize);
+            auto iconFile = iconProvider.FindIcon(themeName, iconName, iconSize);
             if (iconFile) {
                 wxBitmap bitmap(iconFile->GetFullPath(), wxBITMAP_TYPE_ANY);
                 if (bitmap.IsOk()) {
@@ -374,7 +371,7 @@ private:
 
     std::set<wxString> GetIconNamesFromTheme(const wxString& themeName) {
         if (themeName.IsEmpty()) return {};
-        return iconLocator->GetIconNames(themeName);
+        return iconProvider.GetIconNames(themeName);
     }
 };
 

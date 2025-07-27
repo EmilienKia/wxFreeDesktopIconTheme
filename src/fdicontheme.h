@@ -50,7 +50,7 @@ public:
     IconTheme& operator=(const IconTheme&) = default;
     IconTheme& operator=(IconTheme&&) = default;
 
-    bool Load();
+    bool Preload();
     const wxString& GetName() const { return name; }
     const wxVector<IconDirectory>& GetDirectories() const { return directories; }
     const wxVector<wxString>& GetInherits() const { return inherits; }
@@ -67,9 +67,9 @@ private:
     wxVector<wxString> inherits;
     wxVector<IconDirectory> directories;
 
-    std::map<wxString, std::map<int, wxFileName>> iconCache;
+    mutable std::map<wxString, std::map<int, wxFileName>> iconCache;
 
-    void BuildCache();
+    void BuildCache(bool force = false)const;
 };
 
 
@@ -82,11 +82,22 @@ private:
     wxVector<wxString> paths;
 };
 
+struct ThemeDirectory
+{
+    wxString path;
+    std::map<wxString, wxString> themes; // Map of theme path to theme name
+};
 
-class IconLocator {
+
+class FreeDesktopIconProvider {
 public:
-    IconLocator(ThemeDirectoryManager& dirManager);
-    void LoadThemes();
+    FreeDesktopIconProvider();
+    FreeDesktopIconProvider(const wxVector<wxString>& paths);
+
+    void AppendPath(const wxString& path);
+    void PrependPath(const wxString& path);
+    void RemovePath(const wxString& path);
+    void Clear();
 
     wxVector<wxString> GetThemeNames() const;
 
@@ -98,9 +109,13 @@ public:
 
     std::optional<wxBitmapBundle> LoadIconBundle(const wxString& iconName);
 
+protected:
+    ThemeDirectory LoadThemesFromDirectory(const wxFileName& dirPath);
 
 private:
-    ThemeDirectoryManager& dirs;
+    wxVector<ThemeDirectory> directories;
+
+    //ThemeDirectoryManager& dirs;
     std::map<wxString, IconTheme> themes;
     wxString currentTheme = "hicolor";
 
